@@ -65,7 +65,9 @@ async function main() {
         poolFee,
         initialPrice,
       ])
-    console.log("🟦 `createAndInitializePoolIfNecessary` data:", dataCreateAndInitializePool)
+    console.log(`🟦 \`createAndInitializePoolIfNecessary\` data: ${
+      dataCreateAndInitializePool.slice(0, 14)
+    }...`)
     multicallDataList.push(dataCreateAndInitializePool)
   }
 
@@ -102,7 +104,7 @@ async function main() {
       recipient: network.lp,
       deadline: parseInt(Date.now() / 1e3) + 60 * 20,   // 20 minutes from now
     }])
-    console.log("🟦 Add liquidity data:", dataAddLiquidity)
+    console.log(`🟦 Add liquidity data: ${dataAddLiquidity.slice(0, 14)}...`)
     multicallDataList.push(dataAddLiquidity)
   }
 
@@ -111,7 +113,7 @@ async function main() {
   const multicallData = positionManager.interface.encodeFunctionData(
     'multicall', [multicallDataList],
   ) 
-  console.log("🟦 Multicall data:", multicallData)
+  console.log(`🟧 Multicall data: ${multicallData.slice(0, 14)}...`)
 
 }
 
