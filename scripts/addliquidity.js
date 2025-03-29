@@ -1,17 +1,20 @@
-const { Contract, JsonRpcProvider, parseUnits } = require('ethers')
-const { config, abi } = require('./constants')
+const { Contract, JsonRpcProvider, Wallet, parseUnits, ZeroAddress, parseEther } = require('ethers')
 const { priceToPx, priceToTick } = require('./utils')
+const { config, abi } = require('./constants')
+require('dotenv').config()
 
-const network = config.sepolia
+const network = config.bsc
 
-const token0 = '0x0a222c8255E4462B91A3AE22d61A0de48Bb743E8'   // $X
-const token1 = '0xb31ff0188118a615AebC106FeCb3f5596D5d61E3'   // $Y
+const token0 = '0x32E2E55197ef6aF8c11E2bBEf5f2B8300A17060e'   // [$X] $Mock USDC
+const token1 = '0x9854B03C299Db3324aFbD854E262940DF3F469ab'   // [$Y] $Mock BNB
+
 const poolFee = 2500
+const enoughAllownace = parseEther('1000000000000')
 
 /**
  * @type {boolean}
  */
-const token0IsBase = false   // It means using `1 $Y = p $X` to represent the price
+const token0IsBase = true
 
 /**
  * @type {[
@@ -22,13 +25,14 @@ const token0IsBase = false   // It means using `1 $Y = p $X` to represent the pr
  * ][]}
  */
 const ranges = [
-  ['2.4', '3.2', '1000', '3000'],
-  ['3.2', '4.0', '2000', '8000'],
-  ['4.0', '4.8', '5000', '22000'],
-  ['4.8', '5.6', '5000', '25000'],
-  ['5.6', '6.4', '3000', '18000'],
-  ['6.4', '7.2', '1000', '7000'],
+  ['250', '350', '1000', '4.5'],
+  ['350', '450', '2000', '5'],
+  ['450', '550', '5000', '10'],
+  ['550', '650', '2400', '4'],
+  ['650', '750', '1000', '1.5'],
 ]
+
+const initialPrice = '500'      // available only when pool is not deployed
 
 
 const { positionManagerAddress, factoryAddress } = network.addresses
@@ -39,10 +43,13 @@ async function main() {
 
   // Prepare
   const provider = new JsonRpcProvider(network.rpc)
+  const wallet = new Wallet(process.env.PAYER_PK, provider)
   const factory = new Contract(factoryAddress, factoryABI, provider)
   const positionManager = new Contract(positionManagerAddress, positionManagerABI, provider)
-  const token0Decimals = await (new Contract(token0, erc20ABI, provider)).decimals()
-  const token1Decimals = await (new Contract(token1, erc20ABI, provider)).decimals()
+  const token0Contract = new Contract(token0, erc20ABI, provider)
+  const token1Contract = new Contract(token1, erc20ABI, provider)
+  const token0Decimals = await token0Contract.decimals()
+  const token1Decimals = await token1Contract.decimals()
   const multicallDataList = []
 
 
@@ -50,20 +57,22 @@ async function main() {
   const poolAddress = await factory.getPool(token0, token1, poolFee)
   console.log(`Pool address: ${poolAddress}`)
 
-  const deployed = (await provider.getCode(poolAddress)).length > 0
+  const deployed = poolAddress != ZeroAddress && (await provider.getCode(poolAddress)).length > 0
   console.log(`Pool status: ${deployed ? 'deployed ✅' : 'not deployed ⬜️'}`)
 
 
   // Create pool
   if (!deployed) {
-    console.log('Pool not deployed, exiting...')
-    const initialPrice = priceToPx('1', '5', token0Decimals, token1Decimals)
+    console.log('Pool not deployed, creating...')
     const dataCreateAndInitializePool = positionManager.interface
       .encodeFunctionData('createAndInitializePoolIfNecessary', [
         token0,
         token1,
         poolFee,
-        initialPrice,
+        priceToPx(
+          token0IsBase ? initialPrice : '1', token0IsBase ? '1' : initialPrice, 
+          token0Decimals, token1Decimals,
+        ),
       ])
     console.log(`🟦 \`createAndInitializePoolIfNecessary\` data: ${
       dataCreateAndInitializePool.slice(0, 14)
@@ -74,8 +83,7 @@ async function main() {
 
   // Fetch pool status
   const pool = new Contract(poolAddress, poolABI, provider)
-  const tickSpacing = parseInt(await pool.tickSpacing())
-
+  const tickSpacing = parseInt(deployed ? await pool.tickSpacing() : 50)
 
 
   // Calculate ticks
@@ -114,6 +122,44 @@ async function main() {
     'multicall', [multicallDataList],
   ) 
   console.log(`🟧 Multicall data: ${multicallData.slice(0, 14)}...`)
+
+
+  // Approve tokens
+  const [allowance0, allowance1] = await Promise.all([
+    token0Contract.allowance(wallet.address, network.lp),
+    token1Contract.allowance(wallet.address, network.lp),
+  ])
+  console.log(`⬜️ Allowance of ${wallet.address} to ${network.lp}:`)
+  console.log(`  - ${token0}: ${allowance0}`)
+  console.log(`  - ${token1}: ${allowance1}`)
+
+  if (allowance0 < enoughAllownace || allowance1 < enoughAllownace) {
+    console.log('\nNot enough allowance, approving...')
+    const dataApprove = token0Contract.interface.encodeFunctionData(
+      'approve', [positionManagerAddress, enoughAllownace]
+    )
+    const tx0 = await wallet.sendTransaction({
+      to: token0,
+      data: dataApprove,
+    })
+    await tx0.wait()
+    console.log(`🟩 Approved token0 at tx: ${tx0.hash}`)
+    const tx1 = await wallet.sendTransaction({
+      to: token1,
+      data: dataApprove,
+    })
+    await tx1.wait()
+    console.log(`🟩 Approved token1 at tx: ${tx1.hash}`)
+  }
+
+
+  // Add liquidity
+  const tx = await wallet.sendTransaction({
+    to: positionManagerAddress,
+    data: multicallData,
+  })
+  await tx.wait()
+  console.log(`\n🟩 Added liquidity at tx: ${tx.hash}`)
 
 }
 
