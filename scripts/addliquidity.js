@@ -126,10 +126,10 @@ async function main() {
 
   // Approve tokens
   const [allowance0, allowance1] = await Promise.all([
-    token0Contract.allowance(wallet.address, network.lp),
-    token1Contract.allowance(wallet.address, network.lp),
+    token0Contract.allowance(wallet.address, positionManagerAddress),
+    token1Contract.allowance(wallet.address, positionManagerAddress),
   ])
-  console.log(`⬜️ Allowance of ${wallet.address} to ${network.lp}:`)
+  console.log(`⬜️ Allowance of ${wallet.address} to ${positionManagerAddress}:`)
   console.log(`  - ${token0}: ${allowance0}`)
   console.log(`  - ${token1}: ${allowance1}`)
 
